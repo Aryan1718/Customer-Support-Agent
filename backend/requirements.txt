@@ -1,4 +1,6 @@
 fastapi
+openai
+pytest
 python-dotenv
 SQLAlchemy
 psycopg[binary]

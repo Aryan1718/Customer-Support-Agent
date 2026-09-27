@@ -1,6 +1,7 @@
 from functools import lru_cache
 
 from .config import LLMSettings, get_llm_settings
+from .guardrails import evaluate_assistant_response, evaluate_user_message
 from .prompts import DEFAULT_SYSTEM_PROMPT
 from .providers import LLMProvider, OpenAICompatibleProvider
 from .types import LLMMessage, LLMResponse, LLMTool
@@ -26,14 +27,32 @@ class LLMService:
         system_prompt: str | None = None,
         tools: list[LLMTool] | None = None,
     ) -> LLMResponse:
+        user_guardrail = evaluate_user_message(message)
+        if not user_guardrail.allowed:
+            return LLMResponse(
+                content=user_guardrail.safe_response or "",
+                model=self.settings.model,
+            )
+
         messages = history or []
         messages = [*messages, LLMMessage(role="user", content=message)]
 
-        return self.provider.generate(
+        response = self.provider.generate(
             messages=messages,
             system_prompt=system_prompt or self.system_prompt,
             tools=self.tools if tools is None else tools,
         )
+
+        assistant_guardrail = evaluate_assistant_response(response.content)
+        if not assistant_guardrail.allowed:
+            return LLMResponse(
+                content=assistant_guardrail.safe_response or "",
+                model=response.model,
+                raw=response.raw,
+                tool_calls=response.tool_calls,
+            )
+
+        return response
 
 
 def _build_provider(settings: LLMSettings) -> LLMProvider:

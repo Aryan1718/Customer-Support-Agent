@@ -8,6 +8,7 @@ from app.llm.tool_schemas import (
     CUSTOMER_SUPPORT_TOOLS,
     OPEN_TICKET_TOOL,
     ORDER_STATUS_TOOL,
+    REFUND_TOOL,
 )
 from app.llm.types import LLMMessage, LLMResponse, LLMTool
 
@@ -88,6 +89,19 @@ def test_order_status_tool_schema_describes_order_lookup_usage() -> None:
     assert ORDER_STATUS_TOOL.parameters["required"] == ["Email"]
     assert ORDER_STATUS_TOOL.parameters["properties"]["Email"]["format"] == "email"
     assert ORDER_STATUS_TOOL in CUSTOMER_SUPPORT_TOOLS
+
+
+def test_refund_tool_schema_describes_refund_usage() -> None:
+    description = REFUND_TOOL.description.lower()
+
+    assert REFUND_TOOL.name == "Refund"
+    assert "refund" in description
+    assert "human approval" in description
+    assert "less than $10" in description
+    assert REFUND_TOOL.parameters["required"] == ["email", "orderID"]
+    assert REFUND_TOOL.parameters["properties"]["email"]["format"] == "email"
+    assert REFUND_TOOL.parameters["properties"]["orderID"]["type"] == "integer"
+    assert REFUND_TOOL in CUSTOMER_SUPPORT_TOOLS
 
 
 def test_service_sends_configured_tool_schemas_to_provider() -> None:

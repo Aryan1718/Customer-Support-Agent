@@ -5,10 +5,12 @@ from app.llm.prompts import DEFAULT_SYSTEM_PROMPT
 from app.llm.providers import LLMProvider
 from app.llm.service import LLMService
 from app.llm.tool_schemas import (
+    CUSTOMER_INFORMATION_TOOL,
     CUSTOMER_SUPPORT_TOOLS,
     OPEN_TICKET_TOOL,
     ORDER_STATUS_TOOL,
     REFUND_TOOL,
+    UPDATE_ORDER_TOOL,
 )
 from app.llm.types import LLMMessage, LLMResponse, LLMTool
 
@@ -79,6 +81,19 @@ def test_open_ticket_tool_schema_describes_create_ticket_usage() -> None:
     assert OPEN_TICKET_TOOL.parameters["properties"]["customerEmail"]["format"] == "email"
 
 
+def test_customer_information_tool_schema_describes_customer_lookup_usage() -> None:
+    description = CUSTOMER_INFORMATION_TOOL.description.lower()
+
+    assert CUSTOMER_INFORMATION_TOOL.name == "customerInformation"
+    assert "customer account information" in description
+    assert "no customer found" in description
+    assert CUSTOMER_INFORMATION_TOOL.parameters["required"] == ["email"]
+    assert (
+        CUSTOMER_INFORMATION_TOOL.parameters["properties"]["email"]["format"] == "email"
+    )
+    assert CUSTOMER_INFORMATION_TOOL in CUSTOMER_SUPPORT_TOOLS
+
+
 def test_order_status_tool_schema_describes_order_lookup_usage() -> None:
     description = ORDER_STATUS_TOOL.description.lower()
 
@@ -102,6 +117,18 @@ def test_refund_tool_schema_describes_refund_usage() -> None:
     assert REFUND_TOOL.parameters["properties"]["email"]["format"] == "email"
     assert REFUND_TOOL.parameters["properties"]["orderID"]["type"] == "integer"
     assert REFUND_TOOL in CUSTOMER_SUPPORT_TOOLS
+
+
+def test_update_order_tool_schema_describes_order_update_usage() -> None:
+    description = UPDATE_ORDER_TOOL.description.lower()
+
+    assert UPDATE_ORDER_TOOL.name == "updateOrder"
+    assert "update" in description
+    assert "can not update" in description
+    assert UPDATE_ORDER_TOOL.parameters["required"] == ["Email", "OrderId"]
+    assert UPDATE_ORDER_TOOL.parameters["properties"]["Email"]["format"] == "email"
+    assert UPDATE_ORDER_TOOL.parameters["properties"]["OrderId"]["type"] == "integer"
+    assert UPDATE_ORDER_TOOL in CUSTOMER_SUPPORT_TOOLS
 
 
 def test_service_sends_configured_tool_schemas_to_provider() -> None:

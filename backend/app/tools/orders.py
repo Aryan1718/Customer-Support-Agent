@@ -1,3 +1,4 @@
+from decimal import Decimal
 from typing import Literal, TypedDict
 
 from pydantic import BaseModel, PositiveInt
@@ -35,6 +36,12 @@ class OrderStatusSuccessPayload(TypedDict):
 
 OrderStatusResult = OrderStatusSuccessPayload | OrderStatusFailure
 
+UpdateOrderResult = Literal[True, "No customer found", "No order found", "Can not update"]
+
+
+class UpdateOrderOutput(BaseModel):
+    result: UpdateOrderResult
+
 
 def _dump_order_status_success(payload: OrderStatusSuccess) -> OrderStatusSuccessPayload:
     if hasattr(payload, "model_dump"):
@@ -51,6 +58,14 @@ def _validate_order_status_output(
         return _dump_order_status_success(validated_result)
 
     return validated_result
+
+
+def _validate_update_order_output(result: UpdateOrderResult) -> UpdateOrderResult:
+    return UpdateOrderOutput(result=result).result
+
+
+def _calculate_new_total_amount(order: Order) -> Decimal:
+    return Decimal(order.total_amount)
 
 
 def order_status_with_session(session: Session, customer_email: str) -> OrderStatusResult:
@@ -83,3 +98,37 @@ def OrderStatus(Email: str) -> OrderStatusResult:
 
     with session_factory() as session:
         return order_status_with_session(session, Email)
+
+
+def update_order_with_session(
+    session: Session, customer_email: str, order_id: int
+) -> UpdateOrderResult:
+    email = customer_email.strip()
+
+    customer_id = session.scalar(select(Customer.id).where(Customer.email == email))
+    if customer_id is None:
+        return _validate_update_order_output("No customer found")
+
+    order = session.scalar(
+        select(Order).where(Order.id == order_id, Order.customer_id == customer_id)
+    )
+    if order is None:
+        return _validate_update_order_output("No order found")
+
+    old_amount = Decimal(order.total_amount)
+    new_amount = _calculate_new_total_amount(order)
+    if new_amount > old_amount or new_amount < old_amount:
+        return _validate_update_order_output("Can not update")
+
+    order.total_amount = new_amount
+    session.commit()
+    session.refresh(order)
+
+    return _validate_update_order_output(True)
+
+
+def updateOrder(Email: str, OrderId: int) -> UpdateOrderResult:
+    session_factory = get_session_factory()
+
+    with session_factory() as session:
+        return update_order_with_session(session, Email, OrderId)

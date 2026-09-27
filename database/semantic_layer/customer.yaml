@@ -1,0 +1,50 @@
+table: customer
+model: Customer
+description: Customer account records used to identify customers and connect them to orders and support tickets.
+primary_key:
+  - id
+fields:
+  - name: id
+    type: integer
+    semantic_type: identifier
+    nullable: false
+    primary_key: true
+    indexed: true
+    description: Unique customer identifier.
+  - name: email
+    type: string
+    length: 255
+    semantic_type: email
+    nullable: false
+    unique: true
+    indexed: true
+    description: Customer email address. Use this for customer lookup when an email is provided.
+  - name: name
+    type: string
+    length: 255
+    semantic_type: person_name
+    nullable: true
+    description: Customer display name.
+  - name: created_at
+    type: datetime
+    semantic_type: timestamp
+    nullable: false
+    default: utc_now
+    description: Timestamp when the customer record was created.
+relationships:
+  - name: orders
+    type: one_to_many
+    target_table: order
+    source_field: id
+    target_field: customer_id
+    description: A customer can have many orders.
+  - name: tickets
+    type: one_to_many
+    target_table: ticket
+    source_field: id
+    target_field: customer_id
+    description: A customer can have many support tickets.
+query_guidance:
+  - Join to orders with customer.id = order.customer_id.
+  - Join to tickets with customer.id = ticket.customer_id.
+  - Prefer exact email matching for customer-specific support lookups.

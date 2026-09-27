@@ -1,0 +1,59 @@
+table: order
+model: Order
+description: Customer order records with current fulfillment status, amount, and creation timestamp.
+primary_key:
+  - id
+fields:
+  - name: id
+    type: integer
+    semantic_type: identifier
+    nullable: false
+    primary_key: true
+    indexed: true
+    description: Unique order identifier.
+  - name: customer_id
+    type: integer
+    semantic_type: foreign_key
+    nullable: false
+    indexed: true
+    foreign_key:
+      table: customer
+      field: id
+    description: Customer who owns the order.
+  - name: status
+    type: string
+    length: 50
+    semantic_type: status
+    nullable: false
+    allowed_values:
+      - pending
+      - processing
+      - shipped
+      - delivered
+      - cancelled
+    description: Current order lifecycle status.
+  - name: total_amount
+    type: numeric
+    precision: 10
+    scale: 2
+    semantic_type: money
+    nullable: false
+    description: Total monetary value of the order.
+  - name: created_at
+    type: datetime
+    semantic_type: timestamp
+    nullable: false
+    default: utc_now
+    description: Timestamp when the order was created.
+relationships:
+  - name: customer
+    type: many_to_one
+    target_table: customer
+    source_field: customer_id
+    target_field: id
+    description: Each order belongs to one customer.
+query_guidance:
+  - The table name order is a reserved SQL keyword in many databases; quote it when writing raw SQL.
+  - Join to customer with order.customer_id = customer.id.
+  - Use status for fulfillment and cancellation queries.
+  - Use total_amount for revenue and order value calculations.

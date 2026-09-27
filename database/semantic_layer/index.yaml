@@ -1,0 +1,29 @@
+semantic_layer:
+  version: 1
+  source: database.models
+  description: Table-level semantic metadata for query planning and customer support agent database access.
+tables:
+  - table: customer
+    file: customer.yaml
+    description: Customer account records.
+  - table: order
+    file: order.yaml
+    description: Customer order records.
+  - table: ticket
+    file: ticket.yaml
+    description: Customer support ticket records.
+join_paths:
+  - name: customer_orders
+    from_table: customer
+    to_table: order
+    join:
+      - customer.id = order.customer_id
+  - name: customer_tickets
+    from_table: customer
+    to_table: ticket
+    join:
+      - customer.id = ticket.customer_id
+query_notes:
+  - Use customer.email for exact customer lookup when available.
+  - The order table name should be quoted in raw SQL because order can be a reserved keyword.
+  - Treat ticket.closed_at as nullable; open tickets can have no close timestamp.

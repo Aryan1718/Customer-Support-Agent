@@ -1,0 +1,58 @@
+table: ticket
+model: Ticket
+description: Customer support ticket records with issue details, current status, creation time, and optional closure time.
+primary_key:
+  - id
+fields:
+  - name: id
+    type: integer
+    semantic_type: identifier
+    nullable: false
+    primary_key: true
+    indexed: true
+    description: Unique support ticket identifier.
+  - name: customer_id
+    type: integer
+    semantic_type: foreign_key
+    nullable: false
+    indexed: true
+    foreign_key:
+      table: customer
+      field: id
+    description: Customer who owns the support ticket.
+  - name: issue
+    type: text
+    semantic_type: support_issue
+    nullable: false
+    description: Customer-reported issue or support request summary.
+  - name: status
+    type: string
+    length: 50
+    semantic_type: status
+    nullable: false
+    allowed_values:
+      - open
+      - closed
+    description: Current ticket status.
+  - name: created_at
+    type: datetime
+    semantic_type: timestamp
+    nullable: false
+    default: utc_now
+    description: Timestamp when the support ticket was created.
+  - name: closed_at
+    type: datetime
+    semantic_type: timestamp
+    nullable: true
+    description: Timestamp when the support ticket was closed. Null means the ticket has not been closed.
+relationships:
+  - name: customer
+    type: many_to_one
+    target_table: customer
+    source_field: customer_id
+    target_field: id
+    description: Each ticket belongs to one customer.
+query_guidance:
+  - Join to customer with ticket.customer_id = customer.id.
+  - Use status = open for unresolved ticket queries.
+  - Use closed_at only for closed ticket timing; it can be null for open tickets.

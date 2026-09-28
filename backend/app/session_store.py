@@ -21,6 +21,8 @@ class ChatSession(BaseModel):
     customer_email: str | None = None
     orders: list[dict[str, Any]] = Field(default_factory=list)
     collected_params: dict[str, Any] = Field(default_factory=dict)
+    active_tool: str | None = None
+    last_missing_params: list[str] = Field(default_factory=list)
     conversations: list[ConversationTurn] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
@@ -104,6 +106,21 @@ class InMemorySessionStore:
             if collected_params is not None:
                 session.collected_params.update(collected_params)
 
+            self._touch_session(session)
+            return session.model_copy(deep=True)
+
+    def update_tool_state(
+        self,
+        session_id: str,
+        *,
+        active_tool: str | None,
+        last_missing_params: list[str] | None = None,
+    ) -> ChatSession:
+        with self._lock:
+            self._delete_expired_sessions()
+            session = self._require_session(session_id)
+            session.active_tool = active_tool
+            session.last_missing_params = last_missing_params or []
             self._touch_session(session)
             return session.model_copy(deep=True)
 

@@ -93,6 +93,28 @@ def test_update_context_stores_customer_order_and_collected_params():
     }
 
 
+def test_update_tool_state_tracks_and_clears_active_tool():
+    store = InMemorySessionStore()
+    session = store.create_session()
+
+    updated_session = store.update_tool_state(
+        session.session_id,
+        active_tool="Refund",
+        last_missing_params=["email", "orderID"],
+    )
+
+    assert updated_session.active_tool == "Refund"
+    assert updated_session.last_missing_params == ["email", "orderID"]
+
+    cleared_session = store.update_tool_state(
+        session.session_id,
+        active_tool=None,
+    )
+
+    assert cleared_session.active_tool is None
+    assert cleared_session.last_missing_params == []
+
+
 def test_lazy_cleanup_runs_when_store_is_used():
     clock = Clock()
     store = InMemorySessionStore(ttl_seconds=180, now=clock.now)

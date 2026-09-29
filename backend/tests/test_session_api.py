@@ -192,3 +192,42 @@ def test_llm_chat_uses_validation_fallback_for_high_severity_contradiction(monke
         "Your refund request needs human approval."
     )
     assert len(service.calls) == 3
+
+
+def test_llm_chat_stream_returns_sse_events_and_stores_conversation(monkeypatch):
+    store = InMemorySessionStore()
+    session = store.create_session()
+    service = FakeLLMService(
+        responses=[LLMResponse(content="I can help with that.", model="test-model")]
+    )
+    monkeypatch.setattr(main, "session_store", store)
+    monkeypatch.setattr(main, "get_llm_service", lambda: service)
+    client = TestClient(main.app)
+
+    with client.stream(
+        "POST",
+        "/llm/chat/stream",
+        json={
+            "session_id": session.session_id,
+            "message": "Hello",
+        },
+    ) as response:
+        body = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert 'event: status\ndata: {"stage": "received"}' in body
+    assert 'event: status\ndata: {"stage": "loading_session"}' in body
+    assert 'event: status\ndata: {"stage": "calling_llm"}' in body
+    assert 'event: status\ndata: {"stage": "planning"}' in body
+    assert 'event: status\ndata: {"stage": "finalizing"}' in body
+    assert 'event: status\ndata: {"stage": "storing_conversation"}' in body
+    assert "event: metadata" in body
+    assert f'"session_id": "{session.session_id}"' in body
+    assert 'event: content\ndata: {"delta": "I ' in body
+    assert "event: done" in body
+    assert '"content": "I can help with that."' in body
+
+    stored_session = store.get_session(session.session_id)
+    assert stored_session is not None
+    assert stored_session.conversations[0].llm_response == "I can help with that."

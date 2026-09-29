@@ -1,10 +1,15 @@
 import logging
 import json
+import re
+import asyncio
+from queue import Empty, Queue
 from typing import Any
+from collections.abc import AsyncIterator
 from typing import Literal
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -73,6 +78,18 @@ class ChatRequest(BaseModel):
     history: list[ChatMessage] = Field(default_factory=list)
 
 
+class ChatResponse(BaseModel):
+    session_id: str
+    content: str
+    model: str
+    tool_calls: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ChatPipelineResult(BaseModel):
+    response: ChatResponse
+    session: ChatSession
+
+
 @app.post("/sessions")
 async def create_session() -> dict[str, object]:
     session = session_store.create_session()
@@ -96,12 +113,37 @@ async def llm_health() -> dict[str, str]:
 
 @app.post("/llm/chat")
 async def llm_chat(request: ChatRequest) -> dict[str, object]:
+    response = _handle_chat_request(request)
+
+    return response.model_dump()
+
+
+@app.post("/llm/chat/stream")
+async def llm_chat_stream(request: ChatRequest) -> StreamingResponse:
+    return StreamingResponse(
+        _stream_chat_response(request),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+def _handle_chat_request(request: ChatRequest) -> ChatResponse:
+    return _run_chat_pipeline(request).response
+
+
+def _run_chat_pipeline(
+    request: ChatRequest,
+    emit_status: Any | None = None,
+) -> ChatPipelineResult:
+    _emit_status(emit_status, "loading_session")
     session = session_store.get_or_create_session(request.session_id)
+    _emit_status(emit_status, "calling_llm")
     service = get_llm_service()
     response = service.chat(
         message=request.message,
         history=_build_llm_history(session, request.history),
     )
+    _emit_status(emit_status, "planning")
     plan = plan_tool_turn(
         session=session,
         user_message=request.message,
@@ -112,9 +154,24 @@ async def llm_chat(request: ChatRequest) -> dict[str, object]:
     final_content = response.content
 
     if plan.action == "ask_follow_up":
+        _emit_status(
+            emit_status,
+            "collecting_missing_information",
+            {"missing_params": plan.missing_params},
+        )
         final_content = plan.follow_up_prompt or response.content
     elif plan.action == "execute_tool":
+        _emit_status(
+            emit_status,
+            "executing_tool",
+            {"tool_name": plan.tool_name, "tool_params": plan.tool_params},
+        )
         tool_result = execute_tool_plan(plan, DEFAULT_TOOL_REGISTRY)
+        _emit_status(
+            emit_status,
+            "generating_tool_response",
+            {"tool_name": plan.tool_name},
+        )
         final_response = service.chat(
             message=_build_tool_result_message(
                 user_message=request.message,
@@ -126,6 +183,11 @@ async def llm_chat(request: ChatRequest) -> dict[str, object]:
             tools=[],
         )
         final_content = final_response.content
+        _emit_status(
+            emit_status,
+            "validating_response",
+            {"tool_name": plan.tool_name},
+        )
         validated_response = validate_tool_response(
             service=service,
             original_user_message=request.message,
@@ -135,7 +197,10 @@ async def llm_chat(request: ChatRequest) -> dict[str, object]:
             candidate_response=final_content,
         )
         final_content = validated_response.content
+    else:
+        _emit_status(emit_status, "finalizing")
 
+    _emit_status(emit_status, "storing_conversation")
     session = session_store.append_conversation(
         session_id=session.session_id,
         user_input=request.message,
@@ -143,12 +208,80 @@ async def llm_chat(request: ChatRequest) -> dict[str, object]:
     )
     _log_session("chat_turn_stored", session)
 
-    return {
-        "session_id": session.session_id,
-        "content": final_content,
-        "model": final_response.model,
-        "tool_calls": response.tool_calls,
-    }
+    return ChatPipelineResult(
+        response=ChatResponse(
+            session_id=session.session_id,
+            content=final_content,
+            model=final_response.model,
+            tool_calls=response.tool_calls,
+        ),
+        session=session,
+    )
+
+
+async def _stream_chat_response(request: ChatRequest) -> AsyncIterator[str]:
+    status_queue: Queue[str | ChatPipelineResult | BaseException] = Queue()
+
+    def capture_status(stage: str, detail: dict[str, Any] | None = None) -> None:
+        status_queue.put(_format_status_event(stage, detail))
+
+    yield _format_status_event("received")
+
+    async def run_pipeline() -> None:
+        try:
+            result = await asyncio.to_thread(
+                _run_chat_pipeline,
+                request,
+                capture_status,
+            )
+        except BaseException as exc:
+            status_queue.put(exc)
+        else:
+            status_queue.put(result)
+
+    pipeline_task = asyncio.create_task(run_pipeline())
+    pipeline_result: ChatPipelineResult | None = None
+
+    while pipeline_result is None:
+        try:
+            event = status_queue.get_nowait()
+        except Empty:
+            if pipeline_task.done():
+                await pipeline_task
+            await asyncio.sleep(0.01)
+            continue
+
+        if isinstance(event, ChatPipelineResult):
+            pipeline_result = event
+        elif isinstance(event, BaseException):
+            raise event
+        else:
+            yield event
+
+    await pipeline_task
+
+    response = pipeline_result.response
+    yield _format_stream_event(
+        "metadata",
+        {
+            "session_id": response.session_id,
+            "model": response.model,
+            "tool_calls": response.tool_calls,
+        },
+    )
+
+    for chunk in _split_stream_chunks(response.content):
+        yield _format_stream_event("content", {"delta": chunk})
+
+    yield _format_stream_event(
+        "done",
+        {
+            "session_id": response.session_id,
+            "content": response.content,
+            "model": response.model,
+            "tool_calls": response.tool_calls,
+        },
+    )
 
 
 def _session_response(session: ChatSession) -> dict[str, object]:
@@ -194,6 +327,31 @@ def _build_tool_result_message(
         "Generate a customer-facing response for this verified tool result.\n"
         f"{json.dumps(payload, default=str)}"
     )
+
+
+def _split_stream_chunks(content: str) -> list[str]:
+    return re.findall(r"\S+\s*", content) or [""]
+
+
+def _format_stream_event(event: str, payload: dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload, default=str)}\n\n"
+
+
+def _format_status_event(stage: str, detail: dict[str, Any] | None = None) -> str:
+    payload: dict[str, Any] = {"stage": stage}
+    if detail:
+        payload["detail"] = detail
+
+    return _format_stream_event("status", payload)
+
+
+def _emit_status(
+    emit_status: Any | None,
+    stage: str,
+    detail: dict[str, Any] | None = None,
+) -> None:
+    if emit_status is not None:
+        emit_status(stage, detail)
 
 
 def _log_session(event: str, session: ChatSession) -> None:

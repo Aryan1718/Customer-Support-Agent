@@ -1,5 +1,11 @@
 from .config import LLMSettings, get_llm_settings
 from .service import LLMService, get_llm_service
+from .response_validation import (
+    ResponseValidationVerdict,
+    ValidatedResponse,
+    apply_validation_decision,
+    validate_tool_response,
+)
 from .tool_schemas import (
     CUSTOMER_INFORMATION_TOOL,
     CUSTOMER_SUPPORT_TOOLS,
@@ -34,9 +40,12 @@ __all__ = [
     "OPEN_TICKET_TOOL",
     "ORDER_STATUS_TOOL",
     "REFUND_TOOL",
+    "ResponseValidationVerdict",
     "ToolTurnPlan",
     "UPDATE_ORDER_TOOL",
+    "ValidatedResponse",
     "apply_tool_plan_to_session",
+    "apply_validation_decision",
     "build_tool_params",
     "execute_tool",
     "execute_tool_plan",
@@ -45,4 +54,5 @@ __all__ = [
     "get_llm_settings",
     "has_required_tool_params",
     "plan_tool_turn",
+    "validate_tool_response",
 ]

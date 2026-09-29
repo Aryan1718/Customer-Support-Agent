@@ -18,6 +18,7 @@ from .llm import (
     execute_tool_plan,
     get_llm_service,
     plan_tool_turn,
+    validate_tool_response,
 )
 from .session_store import ChatSession, session_store
 
@@ -125,6 +126,15 @@ async def llm_chat(request: ChatRequest) -> dict[str, object]:
             tools=[],
         )
         final_content = final_response.content
+        validated_response = validate_tool_response(
+            service=service,
+            original_user_message=request.message,
+            tool_name=plan.tool_name or "",
+            tool_params=plan.tool_params,
+            tool_result=tool_result,
+            candidate_response=final_content,
+        )
+        final_content = validated_response.content
 
     session = session_store.append_conversation(
         session_id=session.session_id,

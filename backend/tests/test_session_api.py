@@ -90,6 +90,13 @@ def test_llm_chat_executes_ready_tool_and_uses_llm_to_format_result(monkeypatch)
                 content="Your refund request needs human approval.",
                 model="test-model",
             ),
+            LLMResponse(
+                content=(
+                    '{"valid": true, "severity": "none", '
+                    '"reason": "Supported.", "fallback_response": null}'
+                ),
+                model="test-model",
+            ),
         ]
     )
     monkeypatch.setattr(main, "session_store", store)
@@ -125,6 +132,63 @@ def test_llm_chat_executes_ready_tool_and_uses_llm_to_format_result(monkeypatch)
     assert stored_session.conversations[0].llm_response == (
         "Your refund request needs human approval."
     )
-    assert len(service.calls) == 2
+    assert len(service.calls) == 3
     assert service.calls[1]["kwargs"]["tools"] == []
     assert "Human Approval" in service.calls[1]["kwargs"]["message"]
+    assert service.calls[2]["kwargs"]["tools"] == []
+    assert "candidate_response" in service.calls[2]["kwargs"]["message"]
+
+
+def test_llm_chat_uses_validation_fallback_for_high_severity_contradiction(monkeypatch):
+    store = InMemorySessionStore()
+    session = store.create_session()
+    store.update_tool_state(
+        session.session_id,
+        active_tool="Refund",
+        last_missing_params=["orderID"],
+    )
+    store.update_context(
+        session.session_id,
+        collected_params={"email": "maya.patel@example.test"},
+    )
+    service = FakeLLMService(
+        responses=[
+            LLMResponse(content="", model="test-model"),
+            LLMResponse(content="Your refund is approved.", model="test-model"),
+            LLMResponse(
+                content=(
+                    '{"valid": false, "severity": "high", '
+                    '"reason": "Contradicts Human Approval.", '
+                    '"fallback_response": "Your refund request needs human approval."}'
+                ),
+                model="test-model",
+            ),
+        ]
+    )
+    monkeypatch.setattr(main, "session_store", store)
+    monkeypatch.setattr(main, "get_llm_service", lambda: service)
+    monkeypatch.setattr(
+        main,
+        "DEFAULT_TOOL_REGISTRY",
+        {"Refund": lambda email, orderID: "Human Approval"},
+    )
+    client = TestClient(main.app)
+
+    response = client.post(
+        "/llm/chat",
+        json={
+            "session_id": session.session_id,
+            "message": "order id is 42",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["content"] == "Your refund request needs human approval."
+
+    stored_session = store.get_session(session.session_id)
+    assert stored_session is not None
+    assert stored_session.conversations[0].llm_response == (
+        "Your refund request needs human approval."
+    )
+    assert len(service.calls) == 3

@@ -1,16 +1,29 @@
+<!-- prettier-ignore -->
+<div align="center">
+
 # Customer Support Agent
 
-Full-stack customer support assistant with a React frontend, FastAPI backend, PostgreSQL database, LLM tool calling, and Docker Compose setup.
+![Python](https://img.shields.io/badge/Python-3.11+-3776ab?style=flat-square&logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-Backend-009688?style=flat-square&logo=fastapi&logoColor=white)
+![React](https://img.shields.io/badge/React-Frontend-61dafb?style=flat-square&logo=react&logoColor=111)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Database-4169e1?style=flat-square&logo=postgresql&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Compose-2496ed?style=flat-square&logo=docker&logoColor=white)
+![Tests](https://img.shields.io/badge/Tests-pytest-blue?style=flat-square)
 
-## What It Does
+A customer support agent built around a custom Python agent harness: tool routing, parameter collection, session state, response validation, and streaming updates are implemented directly in this repo instead of using an agent framework.
 
-- Chats with users about support requests
-- Looks up customer account information
-- Checks order status
-- Evaluates refund requests
-- Checks whether an order can be updated
-- Creates support tickets
-- Streams backend progress to the frontend while the assistant works
+</div>
+
+## What We Built
+
+- Custom agent harness for routing support requests to backend tools
+- OpenAI-compatible LLM provider layer
+- Tool registry for customer lookup, order status, refunds, order updates, and ticket creation
+- Parameter extraction and follow-up handling for missing user details
+- Session state for multi-turn support flows
+- Response validation before tool-based answers are streamed back
+- React chat console with backend health checks and live progress events
+- Docker Compose setup for running the frontend and backend together
 
 ## Tech Stack
 
@@ -19,6 +32,8 @@ Full-stack customer support assistant with a React frontend, FastAPI backend, Po
 - Database: PostgreSQL, SQLAlchemy
 - LLM: OpenAI-compatible chat completions API
 - Containers: Docker, Docker Compose
+
+No agent framework is used for the core workflow orchestration. The planning, tool execution, session handling, and validation flow are implemented in the backend code.
 
 ## Project Structure
 

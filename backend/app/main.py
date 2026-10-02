@@ -25,6 +25,15 @@ from .llm import (
     plan_tool_turn,
     validate_tool_response,
 )
+from .observability import (
+    emit_observation,
+    new_trace_context,
+    summarize_plan,
+    summarize_request,
+    summarize_session,
+    summarize_tool_selection,
+    summarize_tool_calls,
+)
 from .session_store import ChatSession, session_store
 
 logger = logging.getLogger(__name__)
@@ -40,7 +49,7 @@ app = FastAPI(title="Customer Support Agent API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -135,13 +144,32 @@ def _run_chat_pipeline(
     request: ChatRequest,
     emit_status: Any | None = None,
 ) -> ChatPipelineResult:
+    trace_context = new_trace_context()
     _emit_status(emit_status, "loading_session")
     session = session_store.get_or_create_session(request.session_id)
+    emit_observation(
+        "chat_turn_started",
+        {
+            "session": summarize_session(session),
+            "request": summarize_request(request.message, len(request.history)),
+        },
+        trace_context,
+    )
     _emit_status(emit_status, "calling_llm")
     service = get_llm_service()
     response = service.chat(
         message=request.message,
         history=_build_llm_history(session, request.history),
+    )
+    emit_observation(
+        "llm_response_received",
+        {
+            "session_id": session.session_id,
+            "model": response.model,
+            "content_length": len(response.content),
+            "tool_calls": summarize_tool_calls(response.tool_calls),
+        },
+        trace_context,
     )
     _emit_status(emit_status, "planning")
     plan = plan_tool_turn(
@@ -149,7 +177,32 @@ def _run_chat_pipeline(
         user_message=request.message,
         tool_calls=response.tool_calls,
     )
+    emit_observation(
+        "tool_planning_decision",
+        {
+            "session_before_plan": summarize_session(session),
+            "request": summarize_request(request.message, len(request.history)),
+            "llm_tool_calls": summarize_tool_calls(response.tool_calls),
+            "tool_selection": summarize_tool_selection(
+                session,
+                request.message,
+                response.tool_calls,
+                plan,
+            ),
+            "plan": summarize_plan(plan),
+        },
+        trace_context,
+    )
     session = apply_tool_plan_to_session(session_store, session.session_id, plan)
+    emit_observation(
+        "session_after_plan_applied",
+        {
+            "session": summarize_session(session),
+            "plan_action": plan.action,
+            "plan_tool_name": plan.tool_name,
+        },
+        trace_context,
+    )
     final_response = response
     final_content = response.content
 
@@ -166,7 +219,26 @@ def _run_chat_pipeline(
             "executing_tool",
             {"tool_name": plan.tool_name, "tool_params": plan.tool_params},
         )
+        emit_observation(
+            "tool_execution_started",
+            {
+                "session_id": session.session_id,
+                "tool_name": plan.tool_name,
+                "tool_params": plan.tool_params,
+                "collected_params": plan.collected_params,
+            },
+            trace_context,
+        )
         tool_result = execute_tool_plan(plan, DEFAULT_TOOL_REGISTRY)
+        emit_observation(
+            "tool_execution_finished",
+            {
+                "session_id": session.session_id,
+                "tool_name": plan.tool_name,
+                "tool_result": tool_result,
+            },
+            trace_context,
+        )
         _emit_status(
             emit_status,
             "generating_tool_response",
@@ -196,6 +268,16 @@ def _run_chat_pipeline(
             tool_result=tool_result,
             candidate_response=final_content,
         )
+        emit_observation(
+            "tool_response_validated",
+            {
+                "session_id": session.session_id,
+                "tool_name": plan.tool_name,
+                "candidate_content_length": len(final_response.content),
+                "validated_content_length": len(validated_response.content),
+            },
+            trace_context,
+        )
         final_content = validated_response.content
     else:
         _emit_status(emit_status, "finalizing")
@@ -205,6 +287,14 @@ def _run_chat_pipeline(
         session_id=session.session_id,
         user_input=request.message,
         llm_response=final_content,
+    )
+    emit_observation(
+        "chat_turn_stored",
+        {
+            "session": summarize_session(session),
+            "final_content_length": len(final_content),
+        },
+        trace_context,
     )
     _log_session("chat_turn_stored", session)
 

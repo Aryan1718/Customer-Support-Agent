@@ -1,9 +1,11 @@
 import json
 import logging
 
-from app.observability import (
-    emit_observation,
+import pytest
+
+from app.telemetry import (
     new_trace_context,
+    record_agent_event,
     summarize_request,
     summarize_tool_selection,
     summarize_tool_calls,
@@ -35,19 +37,56 @@ def test_new_trace_context_creates_distinct_ids():
     assert first != second
 
 
-def test_emit_observation_includes_trace_context(caplog):
+def test_record_agent_event_includes_trace_context(caplog):
     context = new_trace_context()
+    payload = {
+        "session_id": "session-test",
+        "model": "test-model",
+        "content_length": 0,
+        "tool_calls": [],
+    }
 
     with caplog.at_level(logging.INFO, logger="uvicorn.error"):
-        emit_observation("tool_planning_decision", {"planner_action": "no_tool"}, context)
+        record_agent_event("llm_response_received", payload, context)
 
     record = caplog.records[0]
-    payload = json.loads(record.message.split(": ", 1)[1])
+    emitted = json.loads(record.message.split(": ", 1)[1])
 
-    assert "observability.tool_planning_decision" in record.message
-    assert payload["trace_id"] == context.trace_id
-    assert payload["turn_id"] == context.turn_id
-    assert payload["planner_action"] == "no_tool"
+    assert "telemetry.llm_response_received" in record.message
+    assert emitted["event_name"] == "llm_response_received"
+    assert emitted["trace_id"] == context.trace_id
+    assert emitted["turn_id"] == context.turn_id
+    assert emitted["payload"] == payload
+
+
+@pytest.mark.parametrize(
+    ("event_name", "payload"),
+    [
+        ("unknown_event", {}),
+        (
+            "llm_response_received",
+            {
+                "session_id": "session-test",
+                "model": "test-model",
+                "content_length": -1,
+                "tool_calls": [],
+            },
+        ),
+        (
+            "tool_planning_decision",
+            {"planner_action": "no_tool"},
+        ),
+    ],
+)
+def test_record_agent_event_rejects_invalid_event_payloads(caplog, event_name, payload):
+    with caplog.at_level(logging.INFO, logger="uvicorn.error"):
+        record_agent_event(event_name, payload, new_trace_context())
+
+    assert any("validation_failed" in record.message for record in caplog.records)
+    assert not any(
+        record.message.startswith(f"telemetry.{event_name}:")
+        for record in caplog.records
+    )
 
 
 def test_summarize_request_keeps_message_and_counts_history():

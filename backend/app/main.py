@@ -25,9 +25,11 @@ from .llm import (
     plan_tool_turn,
     validate_tool_response,
 )
-from .observability import (
-    emit_observation,
+from .telemetry import (
     new_trace_context,
+    record_agent_event,
+    setup_telemetry,
+    start_agent_span,
     summarize_plan,
     summarize_request,
     summarize_session,
@@ -46,6 +48,7 @@ TOOL_RESULT_SYSTEM_PROMPT = (
 )
 
 app = FastAPI(title="Customer Support Agent API")
+setup_telemetry(app)
 
 app.add_middleware(
     CORSMiddleware,
@@ -145,9 +148,22 @@ def _run_chat_pipeline(
     emit_status: Any | None = None,
 ) -> ChatPipelineResult:
     trace_context = new_trace_context()
+    with start_agent_span(
+        "agent.chat_turn",
+        trace_context,
+        {"agent.streaming": emit_status is not None},
+    ):
+        return _run_chat_pipeline_observed(request, emit_status, trace_context)
+
+
+def _run_chat_pipeline_observed(
+    request: ChatRequest,
+    emit_status: Any | None,
+    trace_context: Any,
+) -> ChatPipelineResult:
     _emit_status(emit_status, "loading_session")
     session = session_store.get_or_create_session(request.session_id)
-    emit_observation(
+    record_agent_event(
         "chat_turn_started",
         {
             "session": summarize_session(session),
@@ -161,7 +177,7 @@ def _run_chat_pipeline(
         message=request.message,
         history=_build_llm_history(session, request.history),
     )
-    emit_observation(
+    record_agent_event(
         "llm_response_received",
         {
             "session_id": session.session_id,
@@ -177,7 +193,7 @@ def _run_chat_pipeline(
         user_message=request.message,
         tool_calls=response.tool_calls,
     )
-    emit_observation(
+    record_agent_event(
         "tool_planning_decision",
         {
             "session_before_plan": summarize_session(session),
@@ -194,7 +210,7 @@ def _run_chat_pipeline(
         trace_context,
     )
     session = apply_tool_plan_to_session(session_store, session.session_id, plan)
-    emit_observation(
+    record_agent_event(
         "session_after_plan_applied",
         {
             "session": summarize_session(session),
@@ -219,7 +235,7 @@ def _run_chat_pipeline(
             "executing_tool",
             {"tool_name": plan.tool_name, "tool_params": plan.tool_params},
         )
-        emit_observation(
+        record_agent_event(
             "tool_execution_started",
             {
                 "session_id": session.session_id,
@@ -230,7 +246,7 @@ def _run_chat_pipeline(
             trace_context,
         )
         tool_result = execute_tool_plan(plan, DEFAULT_TOOL_REGISTRY)
-        emit_observation(
+        record_agent_event(
             "tool_execution_finished",
             {
                 "session_id": session.session_id,
@@ -268,7 +284,7 @@ def _run_chat_pipeline(
             tool_result=tool_result,
             candidate_response=final_content,
         )
-        emit_observation(
+        record_agent_event(
             "tool_response_validated",
             {
                 "session_id": session.session_id,
@@ -288,7 +304,7 @@ def _run_chat_pipeline(
         user_input=request.message,
         llm_response=final_content,
     )
-    emit_observation(
+    record_agent_event(
         "chat_turn_stored",
         {
             "session": summarize_session(session),

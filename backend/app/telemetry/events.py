@@ -1,13 +1,18 @@
 import json
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass
 from typing import Any
 from uuid import uuid4
 
+from pydantic import ValidationError
+
 from app.llm.parameter_extraction import detect_tool_from_text
 from app.llm.tool_orchestrator import ToolTurnPlan
 from app.session_store import ChatSession
+
+from .schemas import validate_observation_event
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -22,20 +27,49 @@ def new_trace_context() -> TraceContext:
     return TraceContext(trace_id=uuid4().hex, turn_id=uuid4().hex)
 
 
-def emit_observation(
+@contextmanager
+def start_agent_span(
+    name: str,
+    context: TraceContext,
+    attributes: Mapping[str, Any] | None = None,
+) -> Iterator[None]:
+    tracer = _get_tracer()
+    if tracer is None:
+        with nullcontext():
+            yield
+        return
+
+    span_attributes = {
+        "agent.trace_id": context.trace_id,
+        "agent.turn_id": context.turn_id,
+        **_flatten_attributes(attributes or {}),
+    }
+    with tracer.start_as_current_span(name, attributes=span_attributes):
+        yield
+
+
+def record_agent_event(
     event: str,
     payload: Mapping[str, Any],
-    context: TraceContext | None = None,
+    context: TraceContext,
 ) -> None:
-    event_payload = dict(payload)
-    if context is not None:
-        event_payload = {**asdict(context), **event_payload}
+    try:
+        observation = validate_observation_event(
+            event_name=event,
+            trace_fields=asdict(context),
+            payload=dict(payload),
+        )
+    except (KeyError, ValidationError) as exc:
+        logger.error("telemetry.%s.validation_failed: %s", event, exc)
+        return
 
+    event_payload = observation.model_dump(mode="json")
     logger.info(
-        "observability.%s: %s",
+        "telemetry.%s: %s",
         event,
         json.dumps(event_payload, default=str, sort_keys=True),
     )
+    _record_span_event(event, event_payload)
 
 
 def summarize_session(session: ChatSession) -> dict[str, Any]:
@@ -117,6 +151,53 @@ def summarize_tool_calls(
         )
 
     return summaries
+
+
+def _record_span_event(event: str, payload: Mapping[str, Any]) -> None:
+    trace = _import_trace_api()
+    if trace is None:
+        return
+
+    span = trace.get_current_span()
+    if not span or not span.is_recording():
+        return
+
+    span.add_event(f"agent.{event}", attributes=_flatten_attributes(payload))
+
+
+def _get_tracer():
+    trace = _import_trace_api()
+    if trace is None:
+        return None
+
+    return trace.get_tracer("customer_support_agent.telemetry")
+
+
+def _import_trace_api():
+    try:
+        from opentelemetry import trace
+    except ImportError:
+        return None
+
+    return trace
+
+
+def _flatten_attributes(payload: Mapping[str, Any]) -> dict[str, str | int | float | bool]:
+    attributes: dict[str, str | int | float | bool] = {}
+    for key, value in payload.items():
+        if value is None:
+            continue
+        if isinstance(value, str | int | float | bool):
+            attributes[key] = value
+            continue
+
+        try:
+            attributes[key] = json.dumps(value, default=str, sort_keys=True)
+        except TypeError:
+            logger.debug("Unable to serialize telemetry attribute %s", key)
+            attributes[key] = str(value)
+
+    return attributes
 
 
 def _first_tool_call_name(

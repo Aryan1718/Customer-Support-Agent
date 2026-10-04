@@ -14,7 +14,7 @@ A customer support agent built around a custom Python agent harness: tool routin
 
 </div>
 
-## Engineering Highlights
+## System Capabilities
 
 This project implements a full-stack customer support agent with a custom backend orchestration layer, deterministic tool execution, multi-turn state management, and a streaming React chat experience.
 

@@ -14,16 +14,17 @@ A customer support agent built around a custom Python agent harness: tool routin
 
 </div>
 
-## What We Built
+## Engineering Highlights
 
-- Custom agent harness for routing support requests to backend tools
-- OpenAI-compatible LLM provider layer
-- Tool registry for customer lookup, order status, refunds, order updates, and ticket creation
-- Parameter extraction and follow-up handling for missing user details
-- Session state for multi-turn support flows
-- Response validation before tool-based answers are streamed back
-- React chat console with backend health checks and live progress events
-- Docker Compose setup for running the frontend and backend together
+This project implements a full-stack customer support agent with a custom backend orchestration layer, deterministic tool execution, multi-turn state management, and a streaming React chat experience.
+
+- **Custom agent orchestration:** Backend-owned planning flow for tool selection, missing-parameter collection, execution, response generation, and validation without relying on an agent framework.
+- **Provider-agnostic LLM layer:** OpenAI-compatible chat completions adapter with configurable model, base URL, temperature, token limits, guardrails, and reusable prompt assets.
+- **Schema-driven tool execution:** Typed tool schemas, dynamic Pydantic parameter validation, and a registry-backed execution layer for customer lookup, order status, refunds, order updates, and ticket creation.
+- **Multi-turn support flows:** Session state tracks collected parameters, active tool intent, missing fields, and recent conversation history so users can provide details naturally across turns.
+- **Grounded response validation:** Tool-based customer responses are checked against verified backend results before being returned or streamed to the frontend.
+- **Observable request lifecycle:** Structured telemetry captures chat turns, planning decisions, selected tools, execution results, validation outcomes, and session updates.
+- **Production-shaped developer workflow:** FastAPI backend, PostgreSQL data layer, React/Vite frontend, Docker Compose runtime, health checks, SSE streaming, and focused pytest coverage.
 
 ## Backend Architecture
 

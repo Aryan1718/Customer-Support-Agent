@@ -37,25 +37,30 @@ def setup_telemetry(app: FastAPI) -> TelemetrySettings:
         )
         return settings
 
-    resource_attributes = {SERVICE_NAME: settings.service_name}
-    if settings.environment:
-        resource_attributes[DEPLOYMENT_ENVIRONMENT] = settings.environment
+    try:
+        resource_attributes = {SERVICE_NAME: settings.service_name}
+        if settings.environment:
+            resource_attributes[DEPLOYMENT_ENVIRONMENT] = settings.environment
 
-    provider = TracerProvider(resource=Resource.create(resource_attributes))
-    exporter_kwargs = {}
-    if settings.otlp_endpoint:
-        exporter_kwargs["endpoint"] = settings.otlp_endpoint
-    if settings.otlp_headers:
-        exporter_kwargs["headers"] = _parse_headers(settings.otlp_headers)
+        provider = TracerProvider(resource=Resource.create(resource_attributes))
+        exporter_kwargs = {}
+        if settings.otlp_endpoint:
+            exporter_kwargs["endpoint"] = settings.otlp_endpoint
+        if settings.otlp_headers:
+            exporter_kwargs["headers"] = _parse_headers(settings.otlp_headers)
 
-    provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(**exporter_kwargs)))
-    trace.set_tracer_provider(provider)
-    FastAPIInstrumentor.instrument_app(app)
-    logger.info(
-        "OpenTelemetry tracing enabled for service=%s endpoint=%s",
-        settings.service_name,
-        settings.otlp_endpoint or "default",
-    )
+        provider.add_span_processor(
+            BatchSpanProcessor(OTLPSpanExporter(**exporter_kwargs))
+        )
+        trace.set_tracer_provider(provider)
+        FastAPIInstrumentor.instrument_app(app)
+        logger.info(
+            "OpenTelemetry tracing enabled for service=%s endpoint=%s",
+            settings.service_name,
+            settings.otlp_endpoint or "default",
+        )
+    except Exception as exc:
+        logger.warning("OpenTelemetry setup failed; continuing without tracing: %s", exc)
 
     return settings
 

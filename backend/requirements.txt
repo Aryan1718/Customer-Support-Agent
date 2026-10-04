@@ -1,4 +1,5 @@
 fastapi
+ddtrace
 opentelemetry-api
 opentelemetry-exporter-otlp-proto-http
 opentelemetry-instrumentation-fastapi

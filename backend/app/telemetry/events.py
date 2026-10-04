@@ -1,7 +1,7 @@
 import json
 import logging
 from collections.abc import Iterator, Mapping, Sequence
-from contextlib import contextmanager, nullcontext
+from contextlib import ExitStack, contextmanager
 from dataclasses import asdict, dataclass
 from typing import Any
 from uuid import uuid4
@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from app.llm.parameter_extraction import detect_tool_from_text
 from app.llm.tool_orchestrator import ToolTurnPlan
 from app.session_store import ChatSession
+from app.datadog_observability import record_datadog_event, start_datadog_workflow_span
 
 from .schemas import validate_observation_event
 
@@ -34,17 +35,25 @@ def start_agent_span(
     attributes: Mapping[str, Any] | None = None,
 ) -> Iterator[None]:
     tracer = _get_tracer()
-    if tracer is None:
-        with nullcontext():
-            yield
-        return
-
     span_attributes = {
         "agent.trace_id": context.trace_id,
         "agent.turn_id": context.turn_id,
         **_flatten_attributes(attributes or {}),
     }
-    with tracer.start_as_current_span(name, attributes=span_attributes):
+
+    with ExitStack() as stack:
+        if tracer is not None:
+            stack.enter_context(
+                tracer.start_as_current_span(name, attributes=span_attributes)
+            )
+        stack.enter_context(
+            start_datadog_workflow_span(
+                name,
+                trace_id=context.trace_id,
+                turn_id=context.turn_id,
+                attributes=attributes,
+            )
+        )
         yield
 
 
@@ -70,6 +79,7 @@ def record_agent_event(
         json.dumps(event_payload, default=str, sort_keys=True),
     )
     _record_span_event(event, event_payload)
+    record_datadog_event(event, event_payload, context.trace_id, context.turn_id)
 
 
 def summarize_session(session: ChatSession) -> dict[str, Any]:
